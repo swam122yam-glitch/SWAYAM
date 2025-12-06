@@ -1,0 +1,193 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAX 100
+#define MSG_LEN 256
+
+typedef struct {
+    char messages[MAX][MSG_LEN];
+    int front;
+    int rear;
+} Queue;
+
+// Function prototypes
+void initializeQueue(Queue *q);
+int isEmpty(Queue *q);
+int isFull(Queue *q);
+void enqueue(Queue *q, char *msg);
+void displayQueue(Queue *q);
+void executeCommand(Queue *q);
+void printDebug(Queue *q);
+void printOutput(Queue *q);
+void addMessage(Queue *q, const char *type);
+void processFile(const char *filename, Queue *cmdQ, Queue *debugQ, Queue *outputQ);
+
+int main() {
+    Queue cmdQueue, debugQueue, outputQueue;
+    initializeQueue(&cmdQueue);
+    initializeQueue(&debugQueue);
+    initializeQueue(&outputQueue);
+
+    char filename[100];
+    printf("Enter filename containing messages: ");
+    scanf("%s", filename);
+    getchar(); // consume newline
+
+    processFile(filename, &cmdQueue, &debugQueue, &outputQueue);
+
+    int choice;
+    do {
+        printf("\n---- Message Moderation System Menu ----\n");
+        printf("1. See the Command Queue\n");
+        printf("2. See the Debug Queue\n");
+        printf("3. See the Output Queue\n");
+        printf("4. Execute a Command\n");
+        printf("5. Print a Debug Statement\n");
+        printf("6. Print an Output Statement\n");
+        printf("7. Add a command to the queue\n");
+        printf("8. Add a Debug Statement to the queue\n");
+        printf("9. Add a Output Statement to the queue\n");
+        printf("0. Exit\n");
+        printf("Enter your choice: ");
+        scanf("%d", &choice);
+        getchar(); // consume newline
+
+        switch(choice) {
+            case 1: displayQueue(&cmdQueue); break;
+            case 2: displayQueue(&debugQueue); break;
+            case 3: displayQueue(&outputQueue); break;
+            case 4: executeCommand(&cmdQueue); break;
+            case 5: printDebug(&debugQueue); break;
+            case 6: printOutput(&outputQueue); break;
+            case 7: addMessage(&cmdQueue, "Command"); break;
+            case 8: addMessage(&debugQueue, "Debug"); break;
+            case 9: addMessage(&outputQueue, "Output"); break;
+            case 0: printf("Exiting program.\n"); break;
+            default: printf("Invalid choice! Try again.\n");
+        }
+    } while(choice != 0);
+
+    return 0;
+}
+
+// Initialize queue
+void initializeQueue(Queue *q) {
+    q->front = -1;
+    q->rear = -1;
+}
+
+// Check if queue is empty
+int isEmpty(Queue *q) {
+    return (q->front == -1);
+}
+
+// Check if queue is full
+int isFull(Queue *q) {
+    return ((q->rear + 1) % MAX == q->front);
+}
+
+// Add message to queue
+void enqueue(Queue *q, char *msg) {
+    if(isFull(q)) {
+        printf("Queue is full! Cannot add message.\n");
+        return;
+    }
+    if(isEmpty(q)) {
+        q->front = q->rear = 0;
+    } else {
+        q->rear = (q->rear + 1) % MAX;
+    }
+    strcpy(q->messages[q->rear], msg);
+}
+
+// Display queue
+void displayQueue(Queue *q) {
+    if(isEmpty(q)) {
+        printf("Queue is empty.\n");
+        return;
+    }
+    printf("Queue contents:\n");
+    int i = q->front;
+    while(1) {
+        printf("%s\n", q->messages[i]);
+        if(i == q->rear) break;
+        i = (i + 1) % MAX;
+    }
+}
+
+// Execute command (remove from Command Queue)
+void executeCommand(Queue *q) {
+    if(isEmpty(q)) {
+        printf("Command Queue is empty.\n");
+        return;
+    }
+    printf("Executing command: %s\n", q->messages[q->front]);
+    if(q->front == q->rear) {
+        q->front = q->rear = -1;
+    } else {
+        q->front = (q->front + 1) % MAX;
+    }
+}
+
+// Print Debug statement
+void printDebug(Queue *q) {
+    if(isEmpty(q)) {
+        printf("Debug Queue is empty.\n");
+        return;
+    }
+    printf("Debug Statement: %s\n", q->messages[q->front]);
+    if(q->front == q->rear) {
+        q->front = q->rear = -1;
+    } else {
+        q->front = (q->front + 1) % MAX;
+    }
+}
+
+// Print Output statement
+void printOutput(Queue *q) {
+    if(isEmpty(q)) {
+        printf("Output Queue is empty.\n");
+        return;
+    }
+    printf("Output Statement: %s\n", q->messages[q->front]);
+    if(q->front == q->rear) {
+        q->front = q->rear = -1;
+    } else {
+        q->front = (q->front + 1) % MAX;
+    }
+}
+
+// Add a message manually to queue
+void addMessage(Queue *q, const char *type) {
+    char msg[MSG_LEN];
+    printf("Enter %s message: ", type);
+    fgets(msg, MSG_LEN, stdin);
+    msg[strcspn(msg, "\n")] = 0; // remove newline
+    enqueue(q, msg);
+    printf("%s message added to queue.\n", type);
+}
+
+// Process file and distribute messages
+void processFile(const char *filename, Queue *cmdQ, Queue *debugQ, Queue *outputQ) {
+    FILE *fp = fopen(filename, "r");
+    if(fp == NULL) {
+        printf("File not found!\n");
+        return;
+    }
+
+    char line[MSG_LEN];
+    while(fgets(line, sizeof(line), fp)) {
+        line[strcspn(line, "\n")] = 0; // remove newline
+        if(strstr(line, "cmd")) {
+            enqueue(cmdQ, line);
+        }
+        if(strstr(line, "Debug")) {
+            enqueue(debugQ, line);
+        }
+        if(strstr(line, "Output")) {
+            enqueue(outputQ, line);
+        }
+    }
+    fclose(fp);
+}
