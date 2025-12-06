@@ -1,0 +1,40 @@
+#include <stdio.h>
+
+// Function to print binary representation of a number
+void printBinary(int n)
+{
+    int binary[32];  // Array to store binary digits (max 32 bits for int)
+    int i = 0;       // Index for array
+
+    // Special case: if number is 0, print 0
+    if(n == 0){
+        printf("0\n");
+        return;
+    }
+
+    // Convert decimal to binary
+    while(n > 0){
+        binary[i] = n % 2; // Store remainder (0 or 1) in array
+        n = n / 2;         // Reduce number by dividing by 2
+        i++;               // Move to next index
+    }
+
+    // Print the binary array in reverse order
+    for(int j = i - 1; j >= 0; j--)
+        printf("%d", binary[j]);
+
+    printf("\n"); // Newline after each binary number
+}
+
+int main()
+{
+    int N;
+    printf("Enter N: "); // Ask user for upper limit
+    scanf("%d", &N);
+
+    // Print binary numbers from 0 to N
+    for(int i = 0; i <= N; i++)
+        printBinary(i);
+
+    return 0;
+}
