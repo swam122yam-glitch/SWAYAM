@@ -1,0 +1,351 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAX_FLIGHT_NO 16
+#define MAX_HEAP 200
+
+/* -------------------- Structures -------------------- */
+typedef struct {
+    char flightNo[MAX_FLIGHT_NO];
+    int fuelLevel;
+    int arrivalSeq; /* tie-breaker: lower arrivalSeq arrived earlier */
+} LandingNode;
+
+/* Min-heap for landing requests */
+typedef struct {
+    LandingNode heap[MAX_HEAP];
+    int size;
+    int seqCounter; /* increments for each arrival to break ties */
+} LandingHeap;
+
+/* Queue node for takeoff */
+typedef struct TakeoffNode {
+    char flightNo[MAX_FLIGHT_NO];
+    struct TakeoffNode* next;
+} TakeoffNode;
+
+typedef struct {
+    TakeoffNode* head;
+    TakeoffNode* tail;
+} TakeoffQueue;
+
+/* Stack node for emergencies */
+typedef struct EmergencyNode {
+    char flightNo[MAX_FLIGHT_NO];
+    char emergencyType[64];
+    struct EmergencyNode* next;
+} EmergencyNode;
+
+/* Flight event list (for BST node) */
+typedef struct EventNode {
+    char event[128];
+    struct EventNode* next;
+} EventNode;
+
+/* BST node keyed by flightNo */
+typedef struct BSTNode {
+    char flightNo[MAX_FLIGHT_NO];
+    EventNode* events; /* linked list of event strings */
+    struct BSTNode* left;
+    struct BSTNode* right;
+} BSTNode;
+
+/* -------------------- Globals / System Containers -------------------- */
+LandingHeap landing;
+TakeoffQueue takeoff;
+EmergencyNode* emergencyStack = NULL;
+BSTNode* flightLogRoot = NULL;
+
+/* -------------------- Utility functions -------------------- */
+void safe_strcpy(char *dst, const char *src, size_t n) {
+    if (n == 0) return;
+    strncpy(dst, src, n-1);
+    dst[n-1] = '\0';
+}
+
+/* -------------------- Landing Heap (Min-Heap) -------------------- */
+void initLandingHeap(LandingHeap* h) {
+    h->size = 0;
+    h->seqCounter = 0;
+}
+void swapLanding(LandingNode* a, LandingNode* b) {
+    LandingNode tmp = *a; *a = *b; *b = tmp;
+}
+/* Compare two landing nodes: return 1 if a has higher priority (lower) than b */
+int landingCmp(const LandingNode* a, const LandingNode* b) {
+    if (a->fuelLevel != b->fuelLevel) return (a->fuelLevel < b->fuelLevel) ? 1 : 0;
+    return (a->arrivalSeq < b->arrivalSeq) ? 1 : 0;
+}
+void heapifyUp(LandingHeap* h, int idx) {
+    while (idx > 0) {
+        int parent = (idx - 1) / 2;
+        if (landingCmp(&h->heap[idx], &h->heap[parent])) {
+            swapLanding(&h->heap[idx], &h->heap[parent]);
+            idx = parent;
+        } else break;
+    }
+}
+void heapifyDown(LandingHeap* h, int idx) {
+    while (1) {
+        int left = 2*idx + 1;
+        int right = 2*idx + 2;
+        int smallest = idx;
+        if (left < h->size && landingCmp(&h->heap[left], &h->heap[smallest]))
+            smallest = left;
+        if (right < h->size && landingCmp(&h->heap[right], &h->heap[smallest]))
+            smallest = right;
+        if (smallest != idx) {
+            swapLanding(&h->heap[idx], &h->heap[smallest]);
+            idx = smallest;
+        } else break;
+    }
+}
+void addLandingRequest(const char* flightNo, int fuelLevel) {
+    if (landing.size >= MAX_HEAP) {
+        printf("Landing heap full! can't add %s\n", flightNo);
+        return;
+    }
+    LandingNode node;
+    safe_strcpy(node.flightNo, flightNo, MAX_FLIGHT_NO);
+    node.fuelLevel = fuelLevel;
+    node.arrivalSeq = ++landing.seqCounter;
+    landing.heap[landing.size++] = node;
+    heapifyUp(&landing, landing.size - 1);
+    printf("Added landing request: %s (Fuel=%d)\n", flightNo, fuelLevel);
+}
+int hasLandingRequests() { return landing.size > 0; }
+LandingNode processLanding() {
+    LandingNode empty = {"", -1, -1};
+    if (landing.size == 0) return empty;
+    LandingNode top = landing.heap[0];
+    landing.heap[0] = landing.heap[--landing.size];
+    if (landing.size > 0) heapifyDown(&landing, 0);
+    return top;
+}
+
+/* -------------------- Takeoff Queue (Linked List) -------------------- */
+void initTakeoffQueue(TakeoffQueue* q) { q->head = q->tail = NULL; }
+void addTakeoffRequest(const char* flightNo) {
+    TakeoffNode* node = (TakeoffNode*)malloc(sizeof(TakeoffNode));
+    if (!node) { perror("malloc"); exit(1); }
+    safe_strcpy(node->flightNo, flightNo, MAX_FLIGHT_NO);
+    node->next = NULL;
+    if (takeoff.tail == NULL) {
+        takeoff.head = takeoff.tail = node;
+    } else {
+        takeoff.tail->next = node;
+        takeoff.tail = node;
+    }
+    printf("Added takeoff request: %s\n", flightNo);
+}
+int hasTakeoffRequests() { return takeoff.head != NULL; }
+char* processTakeoff() {
+    if (takeoff.head == NULL) return NULL;
+    TakeoffNode* node = takeoff.head;
+    char* flight = (char*)malloc(MAX_FLIGHT_NO);
+    if (!flight) { perror("malloc"); exit(1); }
+    safe_strcpy(flight, node->flightNo, MAX_FLIGHT_NO);
+    takeoff.head = node->next;
+    if (takeoff.head == NULL) takeoff.tail = NULL;
+    free(node);
+    return flight;
+}
+
+/* -------------------- Emergency Stack (Linked List) -------------------- */
+void reportEmergency(const char* flightNo, const char* emergencyType) {
+    EmergencyNode* n = (EmergencyNode*)malloc(sizeof(EmergencyNode));
+    if (!n) { perror("malloc"); exit(1); }
+    safe_strcpy(n->flightNo, flightNo, MAX_FLIGHT_NO);
+    safe_strcpy(n->emergencyType, emergencyType, sizeof(n->emergencyType));
+    n->next = emergencyStack;
+    emergencyStack = n;
+    printf("Reported EMERGENCY: %s (%s)\n", flightNo, emergencyType);
+}
+int hasEmergency() { return emergencyStack != NULL; }
+EmergencyNode* handleNextEmergency() {
+    if (emergencyStack == NULL) return NULL;
+    EmergencyNode* top = emergencyStack;
+    emergencyStack = emergencyStack->next;
+    top->next = NULL; /* detach */
+    return top;
+}
+
+/* -------------------- Flight Log BST -------------------- */
+EventNode* makeEvent(const char* ev) {
+    EventNode* e = (EventNode*)malloc(sizeof(EventNode));
+    if (!e) { perror("malloc"); exit(1); }
+    safe_strcpy(e->event, ev, sizeof(e->event));
+    e->next = NULL;
+    return e;
+}
+BSTNode* makeBSTNode(const char* flightNo, const char* eventStr) {
+    BSTNode* n = (BSTNode*)malloc(sizeof(BSTNode));
+    if (!n) { perror("malloc"); exit(1); }
+    safe_strcpy(n->flightNo, flightNo, MAX_FLIGHT_NO);
+    n->left = n->right = NULL;
+    n->events = makeEvent(eventStr);
+    return n;
+}
+void logEvent(const char* flightNo, const char* eventType) {
+    char eventStr[128];
+    snprintf(eventStr, sizeof(eventStr), "%s", eventType);
+    if (flightLogRoot == NULL) {
+        flightLogRoot = makeBSTNode(flightNo, eventStr);
+        return;
+    }
+    BSTNode* cur = flightLogRoot;
+    BSTNode* parent = NULL;
+    int cmp = 0;
+    while (cur != NULL) {
+        parent = cur;
+        cmp = strcmp(flightNo, cur->flightNo);
+        if (cmp == 0) {
+            /* append event to this flight's event list */
+            EventNode* e = makeEvent(eventStr);
+            EventNode* it = cur->events;
+            while (it->next) it = it->next;
+            it->next = e;
+            return;
+        } else if (cmp < 0) cur = cur->left;
+        else cur = cur->right;
+    }
+    /* insert new node */
+    if (cmp < 0) parent->left = makeBSTNode(flightNo, eventStr);
+    else parent->right = makeBSTNode(flightNo, eventStr);
+}
+BSTNode* searchFlight(BSTNode* root, const char* flightNo) {
+    BSTNode* cur = root;
+    while (cur != NULL) {
+        int cmp = strcmp(flightNo, cur->flightNo);
+        if (cmp == 0) return cur;
+        else if (cmp < 0) cur = cur->left;
+        else cur = cur->right;
+    }
+    return NULL;
+}
+void inorderPrintLogsHelper(BSTNode* root) {
+    if (!root) return;
+    inorderPrintLogsHelper(root->left);
+    printf("Flight %s:\n", root->flightNo);
+    EventNode* e = root->events;
+    while (e) {
+        printf(" - %s\n", e->event);
+        e = e->next;
+    }
+    inorderPrintLogsHelper(root->right);
+}
+void inorderPrintLogs() { inorderPrintLogsHelper(flightLogRoot); }
+
+/* Cleanup memory for BST and event lists */
+void freeEventList(EventNode* e) {
+    while (e) {
+        EventNode* tmp = e;
+        e = e->next;
+        free(tmp);
+    }
+}
+void freeBST(BSTNode* node) {
+    if (!node) return;
+    freeBST(node->left);
+    freeBST(node->right);
+    freeEventList(node->events);
+    free(node);
+}
+
+/* -------------------- Dispatcher (Enforces System Rules) -------------------- */
+void processNext() {
+    if (hasEmergency()) {
+        EmergencyNode* em = handleNextEmergency();
+        char log[128];
+        snprintf(log, sizeof(log), "EMERGENCY_HANDLED (%s)", em->emergencyType);
+        printf("Handling emergency: %s (%s)\n", em->flightNo, em->emergencyType);
+        logEvent(em->flightNo, log);
+        free(em);
+        return;
+    }
+    if (hasLandingRequests()) {
+        LandingNode ln = processLanding();
+        if (ln.arrivalSeq != -1) {
+            char log[128];
+            snprintf(log, sizeof(log), "LANDED (Fuel=%d)", ln.fuelLevel);
+            printf("Processing landing: %s (Fuel=%d)\n", ln.flightNo, ln.fuelLevel);
+            logEvent(ln.flightNo, log);
+        }
+        return;
+    }
+    if (hasTakeoffRequests()) {
+        char* f = processTakeoff();
+        if (f) {
+            char log[128];
+            snprintf(log, sizeof(log), "TOOK_OFF");
+            printf("Processing takeoff: %s\n", f);
+            logEvent(f, log);
+            free(f);
+        }
+        return;
+    }
+    printf("No requests to process.\n");
+}
+
+/* -------------------- Test / Demo -------------------- */
+int main() {
+    initLandingHeap(&landing);
+    initTakeoffQueue(&takeoff);
+
+    /* -- Stage: Add many aircraft across landing and takeoff -- */
+    addLandingRequest("AI101", 50);
+    addLandingRequest("BA202", 30);
+    addLandingRequest("CA303", 70);
+    addLandingRequest("DA404", 15);
+    addLandingRequest("EA505", 60);
+    addLandingRequest("FA606", 25);
+    addLandingRequest("GA707", 10);
+    addLandingRequest("HA808", 40);
+    addLandingRequest("IA909", 5);
+    addLandingRequest("JA010", 80);
+    addLandingRequest("KA111", 55);
+    addLandingRequest("LA212", 33);
+    addLandingRequest("MA313", 20);
+    addLandingRequest("NA414", 12);
+    addLandingRequest("OA515", 95);
+    addTakeoffRequest("TAK1");
+    addTakeoffRequest("TAK2");
+    addTakeoffRequest("TAK3");
+    addTakeoffRequest("TAK4");
+    addTakeoffRequest("TAK5");
+
+    /* Report some emergencies (these override others when processing) */
+    reportEmergency("EA505", "Hydraulic Failure");
+    reportEmergency("IA909", "Engine Fire");
+    reportEmergency("TAK3", "Medical Evacuation");
+
+    /* Add more landing & takeoff to reach 30+ total aircraft events */
+    addLandingRequest("PA616", 18);
+    addLandingRequest("QA717", 22);
+    addLandingRequest("RA818", 28);
+    addTakeoffRequest("TAK6");
+    addTakeoffRequest("TAK7");
+
+    printf("\n-- Begin processing according to system priority --\n");
+    /* Process repeatedly until everything is drained */
+    for (int i = 0; i < 80; ++i) { /* more steps to ensure full drain */
+        processNext();
+    }
+
+    printf("\n-- Flight Logs (Sorted by Flight Number) --\n");
+    inorderPrintLogs();
+
+    printf("\n-- Search Example: Logs for IA909 --\n");
+    BSTNode* found = searchFlight(flightLogRoot, "IA909");
+    if (found) {
+        EventNode* e = found->events;
+        printf("Events for %s:\n", found->flightNo);
+        while (e) { printf(" %s\n", e->event); e = e->next; }
+    } else printf("No logs found for IA909\n");
+
+    /* Cleanup */
+    freeBST(flightLogRoot);
+
+    return 0;
+}
